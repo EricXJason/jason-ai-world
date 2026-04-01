@@ -1,7 +1,7 @@
 {
-  "name": "jason-ai-news-hub",
-  "version": "3.0.0",
-  "description": "Jason's Ultimate AI News Agent",
+  "name": "jason-ai-world-hub",
+  "version": "4.0.0",
+  "description": "Jason's A2A Modern News Agent",
   "main": "index.js",
   "dependencies": {
     "express": "^4.18.2",
