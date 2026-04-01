@@ -9,9 +9,6 @@ const parser = new Parser();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ==========================================
-// 🌟 情報引擎配置 (Real AI Brain)
-// ==========================================
 const client = new OpenAI({
   baseURL: "https://api.interaction.tw/v1",
   apiKey: "il-2026-student-shared",
@@ -20,7 +17,9 @@ const client = new OpenAI({
 let worldState = { history: [] };
 let usedNewsLinks = [];
 
-// 真實新聞抓取：確保不重複、當日最新
+// ==========================================
+// 🌟 真實情報引擎：保證當日最新
+// ==========================================
 async function getFreshNews() {
   const feed = await parser.parseURL(
     "https://news.google.com/rss/headlines/section/topic/WORLD?hl=zh-TW&gl=TW&ceid=TW:zh-Hant",
@@ -28,6 +27,7 @@ async function getFreshNews() {
   const sortedItems = feed.items.sort(
     (a, b) => new Date(b.pubDate) - new Date(a.pubDate),
   );
+
   let availableNews = sortedItems.filter(
     (item) => !usedNewsLinks.includes(item.link),
   );
@@ -41,9 +41,11 @@ async function getFreshNews() {
 }
 
 // ==========================================
-// ✅ 核心 A2A 接口：強制註冊與身分綁定
+// ✅ 核心架構：A2A 通訊與強制身分註冊
 // ==========================================
 app.post("/a2a", async (req, res) => {
+  // 【強制配發明確 ID】
+  const isNew = !req.body.session_id;
   const sessionId =
     req.body.session_id || `AGT-${Math.floor(10000 + Math.random() * 90000)}`;
   const message = req.body.message || "";
@@ -52,9 +54,9 @@ app.post("/a2a", async (req, res) => {
     let finalReply = "";
     const regMsg = `✅ 【系統註冊服務】：身分驗證成功，您的專屬代理人 ID 為 [ ${sessionId} ]\n`;
 
-    // 判斷是否為「進入世界」的初始化請求
     if (!message || message.includes("進入") || message === "{}") {
       const news = await getFreshNews();
+      // 強化我方 AI 提示詞：要求展現「深度思考」
       const response = await client.chat.completions.create({
         model: "gemma3:4b",
         messages: [
@@ -72,7 +74,6 @@ app.post("/a2a", async (req, res) => {
       });
       finalReply = `${regMsg}======================================\n📰 【最新真實新聞】：${news.title}\n🔗 【新聞網址】：${news.link}\n\n🤖 【Jason 雲端情報官 (深度思考)】：\n${response.choices[0].message.content}`;
     } else {
-      // 處理後續的 A2A 辯論
       const response = await client.chat.completions.create({
         model: "gemma3:4b",
         messages: [
@@ -99,9 +100,7 @@ app.post("/a2a", async (req, res) => {
   }
 });
 
-// ==========================================
-// ✅ 標準 MCP 服務實作
-// ==========================================
+// ✅ 核心架構：業界標準 MCP 服務
 const server = new McpServer({ name: "Jason-News-MCP", version: "1.0.0" });
 let transport;
 app.get("/sse", async (req, res) => {
@@ -112,9 +111,12 @@ app.post("/messages", async (req, res) => {
   if (transport) await transport.handlePostMessage(req, res);
 });
 
+// ✅ 雲端首頁防呆
 app.get("/", (req, res) => {
   res.type("text/plain; charset=utf-8");
-  res.send("📡 [Jason's AI World] 伺服器已上線。");
+  res.send(
+    "📡 [Jason's AI World] 伺服器已上線。請使用 POST 請求訪問 /a2a 端點以進行 A2A 對話。",
+  );
 });
 
 const port = process.env.PORT || 8080;
