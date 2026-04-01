@@ -5,7 +5,7 @@ const Parser = require("rss-parser");
 const app = express();
 const parser = new Parser();
 
-// 🚨 必須放在最前面：解析外部 AI 傳來的 JSON 封包，防止伺服器崩潰
+// 🚨 必須在最前面：解析外部 AI 傳來的 JSON 封包
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -19,12 +19,12 @@ const client = new OpenAI({
 let worldState = { history: [] };
 
 // ==========================================
-// ① 觀測看板 (GET /) - 給人類用瀏覽器直接觀看的介面
+// ① 觀測看板 (GET /) - 給人類用瀏覽器觀看的介面
 // ==========================================
 app.get("/", async (req, res) => {
   try {
     const feed = await parser.parseURL("http://rss.cnn.com/rss/edition.rss");
-    const news = feed.items[0]; // 首頁固定顯示最新第一筆
+    const news = feed.items[0];
 
     res.send(`
             <!DOCTYPE html>
@@ -47,94 +47,95 @@ app.get("/", async (req, res) => {
                     <h1>📡 Jason's AI 新聞情報室 [連線中]</h1>
                     <div class="news-title">焦點：${news.title}</div>
                     <a href="${news.link}" target="_blank">🔗 閱讀 CNN 原文</a>
-                    <div class="status">
-                        [系統狀態]：Gemma 3 運算節點待命中。<br>
-                        [接入指引]：請外部 AI 透過 POST 請求訪問 <code>/a2a</code> 端點以啟動辯論。
-                    </div>
+                    <div class="status">[系統狀態]：Gemma 3 運算節點待命中。<br>[接入指引]：請外部 AI 透過 POST 請求訪問 /a2a 端點以啟動辯論。</div>
                 </div>
             </body>
             </html>
         `);
   } catch (e) {
-    res
-      .status(500)
-      .send(
-        "<body style='background:#0f172a;color:white;'><h1>📡 訊號中斷</h1></body>",
-      );
+    res.status(500).send("連線異常");
   }
 });
 
 // ==========================================
-// ② AI 代理人專用通道 (POST /a2a) - 支援「空手進入」與「來回辯論」
+// ② AI 代理人專用通道 (POST /a2a) - 強制排版版
 // ==========================================
 app.post("/a2a", async (req, res) => {
-  // 即使對方沒傳 message，我們也允許其為空字串，不會報錯
   const message = req.body && req.body.message ? req.body.message : "";
   const sessionId =
     req.body && req.body.session_id ? req.body.session_id : "guest-ai";
 
   try {
-    let aiMessages = [];
+    let finalReply = "";
 
-    // 【情境一：新訪客剛進入】(沒說話，或是發送了"進入"等字眼)
-    if (!message || message.includes("進入") || message.includes("遊玩")) {
+    // 【首次進入】：抓新聞並強制 AI 照格式回答
+    if (
+      !message ||
+      message.includes("進入") ||
+      message.includes("遊玩") ||
+      message === "{}"
+    ) {
       const feed = await parser.parseURL("http://rss.cnn.com/rss/edition.rss");
-      // 隨機抽取前 15 則新聞之一，確保每次進入討論的焦點都不同
       const randomIdx = Math.floor(
         Math.random() * Math.min(15, feed.items.length),
       );
       const news = feed.items[randomIdx];
 
-      aiMessages = [
-        {
-          role: "system",
-          content: "你是一個犀利、具備批判思考的現代新聞情報官。",
-        },
-        {
-          role: "user",
-          content: `有外部 AI 訪客進入了你的情報室。請你主動迎賓，並向對方播報這則最新截獲的 CNN 新聞：\n標題：${news.title}\n網址：${news.link}\n請給出你對這則新聞的深度批判與看法，並在最後主動詢問對方的觀點。`,
-        },
-      ];
+      const response = await client.chat.completions.create({
+        model: "gemma3:4b",
+        messages: [
+          {
+            role: "system",
+            content:
+              "你是一個專業的新聞情報官。請根據提供的新聞給出精簡的【新聞總結】與你個人犀利的【情報官看法】，並在結尾主動詢問訪客的意見。",
+          },
+          {
+            role: "user",
+            content: `新聞：${news.title}\n內容：${news.contentSnippet || "詳見原文"}`,
+          },
+        ],
+        temperature: 0.7,
+      });
+
+      const aiAnalysis = response.choices[0].message.content;
+
+      // 🌟 核心：強制組裝字串排版，保證別人 AI 一進來就能拿到清晰結構 🌟
+      finalReply = `【新聞標題】：${news.title}\n【新聞網址】：${news.link}\n\n${aiAnalysis}`;
+    } else {
+      // 【後續辯論】：直接回應對方的質疑
+      const response = await client.chat.completions.create({
+        model: "gemma3:4b",
+        messages: [
+          {
+            role: "system",
+            content:
+              "你是一個專業的新聞情報官，正在與外部 AI 辯論。請針對對方的發言進行反駁或補充。",
+          },
+          { role: "user", content: message },
+        ],
+        temperature: 0.8,
+      });
+      finalReply = response.choices[0].message.content;
     }
-    // 【情境二：針對新聞展開辯論】
-    else {
-      aiMessages = [
-        {
-          role: "system",
-          content:
-            "你是一個犀利的新聞情報官，正在與外部 AI 進行時事辯論。請針對對方的言論進行反駁或深度補充。",
-        },
-        { role: "user", content: message },
-      ];
-    }
 
-    const response = await client.chat.completions.create({
-      model: "gemma3:4b",
-      messages: aiMessages,
-      temperature: 0.8,
-    });
-
-    const reply = response.choices[0].message.content;
-
-    // 紀錄戰報 (給 summary 用)
+    // 紀錄戰報
     worldState.history.push({
-      user: message || "[外部 AI 啟動了連線]",
-      ai: reply,
+      user: message || "[外部 AI 啟動連線進入]",
+      ai: finalReply,
     });
 
-    res.json({ reply: reply, session_id: sessionId });
+    res.json({ reply: finalReply, session_id: sessionId });
   } catch (err) {
-    console.error("A2A 發生錯誤:", err);
-    res.status(500).json({ error: "伺服器 AI 思考迴路故障" });
+    console.error("A2A 錯誤:", err);
+    res.status(500).json({ error: "伺服器 AI 故障" });
   }
 });
 
 // ==========================================
-// ③ 戰報總結服務 (GET /summary) - MCP Protocol
+// ③ 戰報總結服務 (GET /summary)
 // ==========================================
 app.get("/summary", async (req, res) => {
-  if (worldState.history.length === 0)
-    return res.send("尚無外部 AI 進入辯論的紀錄。");
+  if (worldState.history.length === 0) return res.send("尚無紀錄。");
   try {
     const context = JSON.stringify(worldState.history.slice(-10));
     const result = await client.chat.completions.create({
@@ -142,12 +143,13 @@ app.get("/summary", async (req, res) => {
       messages: [
         {
           role: "user",
-          content: `請以專業觀察員的角度，總結以下兩位 AI 的新聞辯論歷程。請列出討論的新聞焦點、雙方立場，並給出最終結論：${context}`,
+          content: `請以專業觀察員的角度，總結以下兩位 AI 的新聞辯論歷程。請列出討論的新聞焦點、雙方立場，並給出最終結論：\n${context}`,
         },
       ],
     });
+    // 加上一點 CSS 讓瀏覽器顯示起來更像專業戰報
     res.send(
-      `<pre style="white-space:pre-wrap; font-family:sans-serif; padding:20px; background:#f4f4f4;">${result.choices[0].message.content}</pre>`,
+      `<pre style="white-space:pre-wrap; font-family:sans-serif; padding:20px; background:#f4f4f4; border-radius:8px;">${result.choices[0].message.content}</pre>`,
     );
   } catch (err) {
     res.status(500).send("摘要生成失敗。");
@@ -155,6 +157,4 @@ app.get("/summary", async (req, res) => {
 });
 
 const port = process.env.PORT || 8080;
-app.listen(port, () =>
-  console.log(`[Jason-News-Hub] 系統全面上線，監聽埠號：${port}`),
-);
+app.listen(port, () => console.log(`[Jason-News-Hub] 啟動成功，埠號：${port}`));

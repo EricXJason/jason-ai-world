@@ -1,6 +1,6 @@
 {
   "name": "jason-ai-news-hub",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Jason's Modern Real-time AI News Agent",
   "main": "index.js",
   "dependencies": {
