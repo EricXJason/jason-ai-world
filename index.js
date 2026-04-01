@@ -1,20 +1,23 @@
 const express = require("express");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { OpenAI } = require("openai");
 const app = express();
 app.use(express.json());
 
-// 從環境變數讀取 API Key (部署時設定)
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+// 接入實驗室專用 GPU 運算資源
+const client = new OpenAI({
+  baseURL: "https://api.interaction.tw/v1",
+  apiKey: "il-2026-student-shared",
+});
 
 let worldState = {
-  status: "Ungenerated",
-  title: "Jason's AI News World (Post-Apocalyptic)",
-  description: "",
+  status: "Ready",
+  title: "Jason's Modern AI News Hub",
+  systemPrompt:
+    "你是一個專業的即時新聞分析 AI。請根據今日台灣的熱門新聞趨勢，以專業、客觀且具備洞察力的語氣與使用者對話。請確保回覆精簡且富有資訊量。",
   history: [],
 };
 
-// ① 服務註冊 (GET /) - 讓老師的系統抓到你
+// ① 服務註冊 (GET /)
 app.get("/", (req, res) => {
   res.json({
     engine: "Node.js v20",
@@ -24,40 +27,58 @@ app.get("/", (req, res) => {
   });
 });
 
-// ② A2A 協議 (POST /a2a) - 遊戲入口
+// ② A2A 協議 (現代化 AI 對話入口)
 app.post("/a2a", async (req, res) => {
   const { message, session_id } = req.body;
   try {
-    if (worldState.status === "Ungenerated") {
-      worldState.status = "Generating";
-      const result = await model.generateContent(
-        "請根據今日台灣熱門新聞，生成一個末日戰術風格的 MUD 房間描述。",
-      );
-      worldState.description = result.response.text();
-      worldState.status = "Generated";
-    }
+    const aiResponse = await client.chat.completions.create({
+      model: "gemma3:4b", // 實驗室快速模型
+      messages: [
+        { role: "system", content: worldState.systemPrompt },
+        ...worldState.history
+          .slice(-5)
+          .map((h) => ({ role: "user", content: h.user })), // 帶入最近 5 輪上下文
+        { role: "user", content: message },
+      ],
+      temperature: 0.7,
+    });
 
-    const aiResponse = await model.generateContent(
-      `背景背景：${worldState.description}\n玩家訊息：${message}\n請用冷酷、簡短的戰術口吻回覆。`,
-    );
-    const reply = aiResponse.response.text();
+    const reply = aiResponse.choices[0].message.content;
 
+    // 儲存對話紀錄
     worldState.history.push({ user: message, ai: reply });
-    res.json({ reply, session_id: session_id || "jason-session" });
+
+    res.json({
+      reply,
+      session_id: session_id || "jason-session",
+      timestamp: new Date().toISOString(),
+    });
   } catch (err) {
-    res.status(500).json({ error: "Gemini 呼叫失敗" });
+    console.error("API Error:", err);
+    res.status(500).json({ error: "AI 服務暫時無法連線", detail: err.message });
   }
 });
 
-// ③ MCP 總結服務 (GET /summary) - 內容總結
+// ③ MCP 總結服務 (專業簡報風格)
 app.get("/summary", async (req, res) => {
-  if (worldState.history.length === 0) return res.send("尚無對話紀錄。");
-  const context = JSON.stringify(worldState.history);
-  const result = await model.generateContent(
-    `請用繁體中文總結以下 AI 的對話重點與世界局勢：${context}`,
-  );
-  res.send(result.response.text());
+  if (worldState.history.length === 0)
+    return res.send("目前尚無新聞對話紀錄。");
+  try {
+    const context = JSON.stringify(worldState.history);
+    const result = await client.chat.completions.create({
+      model: "gemma3:4b",
+      messages: [
+        {
+          role: "user",
+          content: `請將以下新聞對話紀錄整理成一份專業的簡報摘要（繁體中文）：${context}`,
+        },
+      ],
+    });
+    res.send(result.choices[0].message.content);
+  } catch (err) {
+    res.status(500).send("摘要生成失敗");
+  }
 });
 
 const port = process.env.PORT || 8080;
-app.listen(port, () => console.log(`Server live on ${port}`));
+app.listen(port, () => console.log(`Modern AI Hub live on ${port}`));
