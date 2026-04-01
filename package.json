@@ -1,6 +1,6 @@
 {
-  "name": "jason-ai-world-hub",
-  "version": "5.0.0",
+  "name": "jason-news-agent-hub",
+  "version": "1.0.0",
   "description": "Jason's A2A & Official MCP News Agent Server",
   "type": "module",
   "main": "index.js",
@@ -8,7 +8,6 @@
     "express": "^4.18.2",
     "@modelcontextprotocol/sdk": "^1.0.1",
     "rss-parser": "^3.13.0",
-    "zod": "^3.22.4",
     "openai": "^4.0.0"
   },
   "scripts": {

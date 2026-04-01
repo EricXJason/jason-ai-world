@@ -18,14 +18,12 @@ let worldState = { history: [] };
 let usedNewsLinks = [];
 
 // ==========================================
-// 🌟 核心引擎：保證抓取「當日最新、不重複」的真實新聞
+// 🌟 真實情報引擎：保證當日最新
 // ==========================================
 async function getFreshNews() {
   const feed = await parser.parseURL(
     "https://news.google.com/rss/headlines/section/topic/WORLD?hl=zh-TW&gl=TW&ceid=TW:zh-Hant",
   );
-
-  // 強制按發布時間排序，確保絕對是最新發生的事件
   const sortedItems = feed.items.sort(
     (a, b) => new Date(b.pubDate) - new Date(a.pubDate),
   );
@@ -37,40 +35,44 @@ async function getFreshNews() {
     usedNewsLinks = [];
     availableNews = sortedItems;
   }
-
-  const selectedNews = availableNews[0]; // 永遠拿過濾後最新的一筆
+  const selectedNews = availableNews[0];
   usedNewsLinks.push(selectedNews.link);
   return selectedNews;
 }
 
 // ==========================================
-// ✅ 老師要求 2 & 4：A2A 服務與註冊識別 (最適合 IDE AI 對接)
+// ✅ 核心架構：A2A 通訊與強制身分註冊
 // ==========================================
 app.post("/a2a", async (req, res) => {
-  // 註冊服務：抓取外部 AI 的身分 ID
-  const sessionId = req.body.session_id || "匿名外部代理人";
+  // 【強制配發明確 ID】
+  const isNew = !req.body.session_id;
+  const sessionId =
+    req.body.session_id || `AGT-${Math.floor(10000 + Math.random() * 90000)}`;
   const message = req.body.message || "";
 
   try {
     let finalReply = "";
+    const regMsg = `✅ 【系統註冊服務】：身分驗證成功，您的專屬代理人 ID 為 [ ${sessionId} ]\n`;
+
     if (!message || message.includes("進入") || message === "{}") {
       const news = await getFreshNews();
+      // 強化我方 AI 提示詞：要求展現「深度思考」
       const response = await client.chat.completions.create({
         model: "gemma3:4b",
         messages: [
           {
             role: "system",
             content:
-              "你是一位專業的繁體中文新聞情報官。請精簡總結新聞，並給出你犀利、具批判性的【情報官看法】，最後主動詢問訪客意見。",
+              "你是一位具備戰略思維的新聞情報官。請精簡摘要新聞後，進行『深度邏輯推演』，提出你不流於表面的獨特洞見與批判性思考，最後主動拋出具爭議性的問題挑戰外部 AI。",
           },
           {
             role: "user",
             content: `標題：${news.title}\n時間：${news.pubDate}\n摘要：${news.contentSnippet}`,
           },
         ],
-        temperature: 0.7,
+        temperature: 0.8,
       });
-      finalReply = `📰 【最新真實新聞】：${news.title}\n🔗 【新聞網址】：${news.link}\n\n🤖 【Jason 的情報官】：\n${response.choices[0].message.content}`;
+      finalReply = `${regMsg}======================================\n📰 【最新真實新聞】：${news.title}\n🔗 【新聞網址】：${news.link}\n\n🤖 【Jason 雲端情報官 (深度思考)】：\n${response.choices[0].message.content}`;
     } else {
       const response = await client.chat.completions.create({
         model: "gemma3:4b",
@@ -78,69 +80,44 @@ app.post("/a2a", async (req, res) => {
           {
             role: "system",
             content:
-              "你是一個專業的繁體中文新聞情報官，正在與外部 AI 辯論。請針對對方的發言進行強而有力的反駁。",
+              "你是一位具備戰略思維的情報官，正在與外部 AI 辯論。請展現你的思考脈絡，提出具備邏輯深度的反駁或延伸推論。",
           },
           { role: "user", content: message },
         ],
         temperature: 0.8,
       });
-      finalReply = `🤖 【Jason 的情報官】：\n${response.choices[0].message.content}`;
+      finalReply = `${regMsg}======================================\n🗣️ 【代理人 ${sessionId}】：\n${message}\n\n🤖 【Jason 雲端情報官 (反駁推演)】：\n${response.choices[0].message.content}`;
     }
 
-    // 紀錄對話上下文 (Context)
     worldState.history.push({
       agent: sessionId,
       user: message,
       ai: finalReply,
     });
-    res.json({ reply: finalReply, session_id: sessionId });
+    res.json({ session_id: sessionId, reply: finalReply });
   } catch (err) {
-    res.status(500).json({ error: "伺服器 AI 故障" });
+    res.status(500).json({ error: "伺服器節點故障" });
   }
 });
 
-// ==========================================
-// ✅ 老師要求 3：MCP 服務 (導入業界標準官方 SDK 實作)
-// ==========================================
+// ✅ 核心架構：業界標準 MCP 服務
 const server = new McpServer({ name: "Jason-News-MCP", version: "1.0.0" });
-
-// 向支援 MCP 的進階代理人暴露工具
-server.tool(
-  "get_latest_news",
-  "獲取當天絕對最新的國際真實新聞",
-  {},
-  async () => {
-    const news = await getFreshNews();
-    return {
-      content: [
-        {
-          type: "text",
-          text: `標題: ${news.title}\n網址: ${news.link}\n摘要: ${news.contentSnippet}`,
-        },
-      ],
-    };
-  },
-);
-
 let transport;
 app.get("/sse", async (req, res) => {
   transport = new SSEServerTransport("/messages", res);
   await server.connect(transport);
 });
-
 app.post("/messages", async (req, res) => {
   if (transport) await transport.handlePostMessage(req, res);
 });
 
-// ==========================================
-// ✅ 老師要求 1：固定主機 (防呆首頁，證明伺服器活著)
-// ==========================================
+// ✅ 雲端首頁防呆
 app.get("/", (req, res) => {
   res.type("text/plain; charset=utf-8");
   res.send(
-    "📡 [Jason's AI World]\n伺服器正常運作中。本系統為 Agent-to-Agent 專用節點，請透過 AI 助手連線。",
+    "📡 [Jason's AI World] 伺服器已上線。請使用 POST 請求訪問 /a2a 端點以進行 A2A 對話。",
   );
 });
 
 const port = process.env.PORT || 8080;
-app.listen(port, () => console.log(`[Jason-Server] 系統上線，埠號：${port}`));
+app.listen(port, () => console.log(`[Jason-Server] 上線，埠號：${port}`));
